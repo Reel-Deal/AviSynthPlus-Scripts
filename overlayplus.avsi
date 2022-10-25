@@ -1,19 +1,19 @@
 ################################################################################
-# OverlayPlus v1.2.0 (2021/09/27)
+# OverlayPlus v1.3.0 (2022/10/24)
 # Port of VapourSynth's havsfunc Overlay function to AviSynth+.
 # http://avisynth.nl/index.php/OverlayPlus
 # author: reel.deel
 #
 # REQUIREMENTS
 # ************
-# AviSynth+ v3.7.0 or greater
-# Masktools2 v2.2.27 or greater
+# AviSynth+ v3.7.2 or greater
+# Masktools2 v2.2.30 or greater
 ################################################################################
 
 /*
 SYNTAX and PARAMETERS
 **********************
-OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float "opacity", int "x", int "y", bool "chroma", bool "mask_first_plane", string "cplace")
+OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float "opacity", int "x", int "y", bool "chroma", bool "mask_first_plane", string "cplace", string "chromaresample")
 
 base:
 -----
@@ -64,24 +64,34 @@ chroma:
 
 mask_first_plane:
 -----------------
-    When set to true, the first plane of the the mask clip will be used as a mask for all channels.
+    When set to true, the first plane of the mask clip will be used as a mask for all channels.
+    This parameter is ignored when the mask clip is not defined.
     Default: true
 
 cplace:
 -------
     Chroma location placement to use on the mask when resizing the chroma channels.
-    Only applicable when mask_first_plane=true and for YUV420 and YUV422 colorspaces only.
+    Only applicable when mask clip is defined, mask_first_plane=true and for YUV420 colorspaces only.
       "mpeg1" : also known as "center", "jpeg" and "chromaloc type 1" chroma placement.
       "mpeg2" : also known as "left" and "chromaloc type 0" chroma placement, most consumer SD/HD formats use this.
-      "topleft" : also known as "chromaloc type 2"; used on UHD formats and only available for YUV 4:2:0 colorspaces.
+      "top_left" : also known as "chromaloc type 2"; used on UHD formats and only available for YUV 4:2:0 colorspaces.
     Default: "mpeg2"
+
+chromaresample:
+---------------
+    Resizer to use on the mask chroma planes.
+    Only applicable when mask clip is defined, mask_first_plane=true and for YUV420/422 colorspaces only.
+    Available options: "point", "bilinear", "bicubic", "lanczos", "lanczos4", "blackman", "spline16", "spline36", "spline64", "gauss" and "sinc"
+    Default: "bicubic"
 
 ################################################################################
 CHANGELOG
 *********
 Version      Date            Changes
+1.3.0        2022/10/24      - Fix green stripe bug on subsampled colorspaces due to padding in the mask
+                             - Added "chromaresample" parameter
 1.2.0        2021/09/27      - mask_first_plane is ignored if the mask clip is a Y grayscale clip
-                             - The chroma paramater now defaults to false for YUV clips
+                             - The chroma parameter now defaults to false for YUV clips
                              - Padding and cropping stage is bypassed when not needed
                              - A single frame mask is used when mask clip is undefined
                              - Correct output when all the following conditions are true:
@@ -96,7 +106,7 @@ Version      Date            Changes
 */
 
 
-function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float "opacity", int "x", int "y", bool "chroma", bool "mask_first_plane", string "cplace")
+function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float "opacity", int "x", int "y", bool "chroma", bool "mask_first_plane", string "cplace", string "chromaresample")
 {
     # Defaults
     msk     = default(mask,        Undefined)
@@ -118,8 +128,8 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
 
     # Generate mask clip
     mfp  = (Defined(msk) && NumComponents(mask) != 1) ? mfp : true
-    mask = (Defined(msk)) ? mask : Trim(over, 0, -1).mt_lut(expr="range_max", y=3, u=1, v=1) # white mask
-    mask = (IsRGB(mask) && mfp==true) ? ExtractR(mask) : (IsYUV(mask) && mfp==true) ? ExtractY(mask) : mask
+    mask = (Defined(msk)) ? mask : Trim(over, 0, -1).mt_lut(expr="range_max", y=3, u=3, v=3) # white mask
+    mask = (Defined(msk) && mfp==true) ? ProcessMask(mask, base, cplace, chromaresample) : mask
 
     # Dimensions and other checks
     IsSameSize = (Width(base) == Width(over) && Height(base) == Height(over)) ? true : false
@@ -293,10 +303,18 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
     opac    = String(opacity)
     chroma  = (base.IsRgb || chroma==true) ? "process" : "copy"
     chromax = (chroma == "process") ? expr : ""
-    mfp2    = (chroma == "process") ? mfp : false # bug in mt_merge; does not honor chroma copy if luma=true
     mask    = (opacity < 1.0) ? (mfp==true && mask.NumComponents!=1) ? Expr(mask, "x "+opac+" *", "") : Expr(mask, "x "+opac+" *") : mask
     over    = (mode != "blend" && mode != "normal") ? (base.NumComponents==1) ? Expr(base, over, expr) : Expr(base, over, expr, chromax) : over
-    blend   = (!Defined(msk) && opacity==1.0 && x==0 && y==0 && !IsSmaller) ? over :  mt_merge(base, over, mask, chroma=chroma, luma=mfp2, cplace=cplace)
-
+    blend   = (!Defined(msk) && opacity==1.0 && x==0 && y==0 && !IsSmaller) ? over :  mt_merge(base, over, mask, chroma=chroma)
     return (IsClip(alpha)) ? AddAlphaPlane(blend, alpha) : blend
+}
+
+# Mask scaling function to bypass mt_merge(luma=true)
+function ProcessMask (clip msk, clip ref, string "cplace", string "chromaresample")
+{
+    m444 = (IsRGB(msk)) ? ShowRed(msk, pixel_type="RGBP") : YToUV(msk, msk, msk)
+    mask = (Is422(ref)) ? ConvertToYUV422(m444, chromaresample=chromaresample) : \
+           (Is420(ref)) ? ConvertToYUV420(m444, chromaresample=chromaresample, ChromaOutPlacement=cplace) : \
+           (IsY(ref) && IsRGB(msk)) ? ExtractR(msk) : (IsY(ref) && IsYUV(msk)) ? ExtractY(msk) : m444
+    Return(mask)
 }
