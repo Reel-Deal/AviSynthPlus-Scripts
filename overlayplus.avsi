@@ -1,5 +1,5 @@
 ################################################################################
-# OverlayPlus v1.1.0 (2021/09/10)
+# OverlayPlus v1.2.0 (2021/09/27)
 # Port of VapourSynth's havsfunc Overlay function to AviSynth+.
 # http://avisynth.nl/index.php/OverlayPlus
 # author: reel.deel
@@ -60,7 +60,7 @@ x/y:
 chroma:
 -------
     Enable or disable chroma processing. When chroma=false, chroma planes are copied from the base clip.
-    Dafault: true (for RGB all planes are always processed)
+    Dafault: false (for RGB all planes are always processed)
 
 mask_first_plane:
 -----------------
@@ -80,6 +80,13 @@ cplace:
 CHANGELOG
 *********
 Version      Date            Changes
+1.2.0        2021/09/27      - mask_first_plane is ignored if the mask clip is a Y grayscale clip
+                             - The chroma paramater now defaults to false for YUV clips
+                             - Padding and cropping stage is bypassed when not needed
+                             - A single frame mask is used when mask clip is undefined
+                             - Correct output when all the following conditions are true:
+                               * mask is not defined, opacity=1.0, x=0, y=0, and overlay clip is a smaller dimension than the base clip
+                             - If the base clip is RGB or YUV444, the mask clip can be either YUV444 or RGB
 1.1.0        2021/09/10      - Add support for all interleaved colorspaces (RBG24/32/48/64 and YUY2)
                              - Copy alpha channel from base clip when available
                              - Fix wrong output when opacity=1.0 and mask was not used and x or y > 0
@@ -97,7 +104,7 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
     opacity = default(opacity,           1.0)
     x       = default(x,                   0)
     y       = default(y,                   0)
-    chroma  = default(chroma,           true)
+    chroma  = default(chroma,          false)
     mfp     = default(mask_first_plane, true)
 
     # Convert interleaved formats to planar and extract alpha from base
@@ -110,41 +117,49 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
             (Defined(msk) && IsYUY2(msk)) ? ConvertToYV16(msk) : (Defined(msk) && HasAlpha(msk)) ? RemoveAlphaPlane(msk) : msk
 
     # Generate mask clip
-    mask = (Defined(msk)) ? mask : mt_lut(over, expr="range_max", y=3, u=3, v=3) # white mask
+    mfp  = (Defined(msk) && NumComponents(mask) != 1) ? mfp : true
+    mask = (Defined(msk)) ? mask : Trim(over, 0, -1).mt_lut(expr="range_max", y=3, u=1, v=1) # white mask
     mask = (IsRGB(mask) && mfp==true) ? ExtractR(mask) : (IsYUV(mask) && mfp==true) ? ExtractY(mask) : mask
+
+    # Dimensions and other checks
+    IsSameSize = (Width(base) == Width(over) && Height(base) == Height(over)) ? true : false
+    IsSmaller  = (Width(base) > Width(over) || Height(base) > Height(over)) ? true : false
+    IsMask444  = (IsRGB(base) || Is444(base) && IsRGB(mask) || Is444(mask)) ? true : false
 
     # Sanity checks
     opacity = Min(Max(opacity, 0.0), 1.0)
     Assert(!IsYV411(base), "OverlayPlus: YV411 colorspace is not accepted")
     Assert(PixelType(base) == PixelType(over), "OverlayPlus: overlay clip must be the same colorspace as the base clip")
-    Assert(mfp == true || PixelType(mask) == PixelType(base), "OverlayPlus: mask clip must be the same colorspace as the base clip")
+    Assert(mfp == true || isMask444 == true || PixelType(mask) == PixelType(base), "OverlayPlus: mask clip must be the same colorspace as the base clip")
     Assert(BitsPerComponent(base) == BitsPerComponent(mask), "OverlayPlus: mask clip must be the same bitdepth as the base clip")
-    Assert(over.Width == mask.Width && over.Height == mask.Height, "OverlayPlus: mask clip must be the same dimensions as the overlay clip")
+    Assert(Width(over) == Width(mask) && Height(over) == Height(mask), "OverlayPlus: mask clip must be the same dimensions as the overlay clip")
     Assert(!Is420(base) || y%2 == 0, "OverlayPlus: the value of 'y' must be mod2")
     Assert(!Is420(base) || !Is422(base) && x%2 == 0, "OverlayPlus: the value of 'x' must be mod2")
 
-    # Calculate padding sizes
-    l = x
-    r = base.width - over.width - x
-    t = y
-    b = base.height - over.height - y
+    # Padding and cropping stage
+    if (x > 0 || y > 0 || IsSameSize == false) {
+        # Calculate padding sizes
+        l = x
+        r = base.Width - over.Width - x
+        t = y
+        b = base.Height - over.Height - y
 
-    # Split into crop and padding values
-    cl = min(l, 0) * -1
-    pl = max(l, 0)
-    ct = min(t, 0) * -1
-    pt = max(t, 0)
-    cr = min(r, 0) * -1
-    pr = max(r, 0)
-    cb = min(b, 0) * -1
-    pb = max(b, 0)
+        # Split into crop and padding values
+        cl = min(l, 0) * -1
+        pl = max(l, 0)
+        ct = min(t, 0) * -1
+        pt = max(t, 0)
+        cr = min(r, 0) * -1
+        pr = max(r, 0)
+        cb = min(b, 0) * -1
+        pb = max(b, 0)
 
-    # Crop and padding
-    over = over.Crop(cl, ct, -cr, -cb)
-    over = over.IsRGB ? over.AddBorders(pl, pt, pr, pb, color=$000000) : over.AddBorders(pl, pt, pr, pb, color_yuv=$000000) # color=$000000 on YUV does not produce black(0) borders
-    mask = mask.Crop(cl, ct, -cr, -cb)
-    mask = mask.IsRGB ? mask.AddBorders(pl, pt, pr, pb, color=$000000) : mask.AddBorders(pl, pt, pr, pb, color_yuv=$000000) # color=$000000 on YUV does not produce black(0) borders
-
+        # Crop and padding
+        over = over.Crop(cl, ct, -cr, -cb)
+        over = over.IsRGB ? over.AddBorders(pl, pt, pr, pb, color=$000000) : over.AddBorders(pl, pt, pr, pb, color_yuv=$000000)
+        mask = mask.Crop(cl, ct, -cr, -cb)
+        mask = mask.IsRGB ? mask.AddBorders(pl, pt, pr, pb, color=$000000) : mask.AddBorders(pl, pt, pr, pb, color_yuv=$000000)
+    }
 
     # Range based on bitdepth
     if (BitsPerComponent(base) != 32) {
@@ -157,7 +172,6 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
         peak = String(1.0)
         fctr = String(1.0)
     }
-
 
     # Blending modes
     if (mode == "blend" || mode == "normal") {
@@ -282,7 +296,7 @@ function OverlayPlus (clip base, clip overlay, clip "mask", string "mode", float
     mfp2    = (chroma == "process") ? mfp : false # bug in mt_merge; does not honor chroma copy if luma=true
     mask    = (opacity < 1.0) ? (mfp==true && mask.NumComponents!=1) ? Expr(mask, "x "+opac+" *", "") : Expr(mask, "x "+opac+" *") : mask
     over    = (mode != "blend" && mode != "normal") ? (base.NumComponents==1) ? Expr(base, over, expr) : Expr(base, over, expr, chromax) : over
-    blend   = (!Defined(msk) && opacity==1.0 && x==0 && y==0) ? over : mt_merge(base, over, mask, chroma=chroma, luma=mfp2, cplace=cplace)
+    blend   = (!Defined(msk) && opacity==1.0 && x==0 && y==0 && !IsSmaller) ? over :  mt_merge(base, over, mask, chroma=chroma, luma=mfp2, cplace=cplace)
 
     return (IsClip(alpha)) ? AddAlphaPlane(blend, alpha) : blend
 }
