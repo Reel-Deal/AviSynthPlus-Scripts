@@ -97,7 +97,7 @@ function PixelShiftRGB (clip input, float "RX", float "RY", float "GX", float "G
                                     float "BX", float "BY", float "AX", float "AY", \
                                     string "Resizer", int "Mode", bool "Inverse")
 {
-    Assert((IsRGB(input)), "PixelShiftUV: input clip must be RGB(A)")
+    Assert((IsRGB(input)), "PixelShiftRGB: input clip must be RGB(A)")
     PixelShiftPlus(input, plane1X=RX, plane1Y=RY, plane2X=GX, plane2Y=GY, \
                           plane3X=BX, plane3Y=BY, plane4X=AX, plane4Y=AY, \
                           Resizer=Resizer, Mode=Mode, Inverse=Inverse)
