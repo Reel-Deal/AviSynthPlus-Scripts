@@ -35,11 +35,10 @@ input:
     PixelShiftRGB: all RGB(A) colorspaces are supported.
     PixelShiftY(UV): all YUV(A) colorspaces are supported.
 
-RX/RY, GX/GY, BX/BY, AX/AY:
-YX/YY, UX/UY, VX/VY, AX/AY:
----------------------------
-    RX/RY, GX/GY, BX/BY, AX/AY: R, G, B, A
-    YX/YY, UX/UY, VX/VY, AX/AY: Y, U, V, A
+RX, RY, GX, GY, BX, BY, AX, AY:
+YX, YY, UX, UY, VX, VY, AX, AY:
+-------------------------------
+    Specify the shift amount in each (R, G, B, A) or (Y, U, V, A) plane. 
     * (X) horizontal shift: positive values shift left, negative values right.
     * (Y) vertical shift: positive values shift upwards, negative values downwards.
     Note that the shifting direction will be reversed if Inverse=true.
