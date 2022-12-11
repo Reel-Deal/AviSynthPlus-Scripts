@@ -1,10 +1,11 @@
 ################################################################################
-# PixelShiftPlus v1.0.0 (2022/11/29)
+# PixelShiftPlus v1.1.0 (2022/12/10)
 # Script to independently shift pixels with subpixel accuracy.
-# It includes 3 functions:
+# It includes 4 functions:
 # * PixelShiftRGB – shift any plane in an RGB(A) clip.
 # * PixelShiftYUV – shift any plane in a YUV(A) clip.
 # * PixelShiftUV – shift the chroma in a YUV(A) clip. Similar to ChromaShiftSP2.
+# * PixelShiftC – uniformly shifts the chroma in a YUV(A) clip.
 #
 # http://avisynth.nl/index.php/PixelShiftPlus
 # author: reel.deel
@@ -29,6 +30,9 @@ PixelShiftYUV (clip input, float "YX", float "YY", float "UX", float "UY",
 PixelShiftUV (clip input, float "UX", float "UY", float "VX", float "VY",
               string "Resizer", bool "ChromaPixels", int "Mode", bool "Inverse")
 
+PixelShiftC (clip input, float "X", float "Y",
+             string "Resizer", bool "ChromaPixels", int "Mode", bool "Inverse")
+
 input:
 -----
     Input clip.
@@ -38,7 +42,7 @@ input:
 RX, RY, GX, GY, BX, BY, AX, AY:
 YX, YY, UX, UY, VX, VY, AX, AY:
 -------------------------------
-    Specify the shift amount in each (R, G, B, A) or (Y, U, V, A) plane. 
+    Specify the shift amount in each (R, G, B, A) or (Y, U, V, A) plane.
     * (X) horizontal shift: positive values shift left, negative values right.
     * (Y) vertical shift: positive values shift upwards, negative values downwards.
     Note that the shifting direction will be reversed if Inverse=true.
@@ -62,7 +66,6 @@ ChromaPixels:
       are half the width and height of the luma plane.
     * YUV422 or YUV411, only the X shift value is divided by 2 and 4, respectively.
     * YUV444, has no effect since the chroma planes are the same size as the luma.
-    * When Resizer="Point", this parameter is ignored and set to true.
     When set to true, the X and Y shift values are not divided.
     Default: false
 
@@ -122,6 +125,15 @@ function PixelShiftUV (clip input, float "UX", float "UY", float "VX", float "VY
                           ChromaPixels=ChromaPixels, Mode=Mode, Inverse=Inverse)
 }
 #/////////////////////////////////
+# Uniform UV pixel shifting function
+function PixelShiftC (clip input, float "X", float "Y", \
+                                  string "Resizer", bool "ChromaPixels", int "Mode", bool "Inverse")
+{
+    Assert((IsYUV(input) || IsYUVA(Input)), "PixelShiftUV: input clip must be YUV(A)")
+    PixelShiftPlus(input, plane2X=X, plane2Y=Y, plane3X=X, plane3Y=Y, Resizer=Resizer, \
+                          ChromaPixels=ChromaPixels, Mode=Mode, Inverse=Inverse)
+}
+#/////////////////////////////////
 # General pixel shifting function
 function PixelShiftPlus (clip input, float "plane1X", float "plane1Y", float "plane2X", float "plane2Y", \
                                      float "plane3X", float "plane3Y", float "plane4X", float "plane4Y", \
@@ -168,13 +180,16 @@ function PixelShiftPlus (clip input, float "plane1X", float "plane1Y", float "pl
         if (mode!=1) {
             # Determine border values
             p1LB = (p1X < 0) ? abs(Round(p1X)) : 0
-            p1RB = (p1X > 0) ? abs(Round(p1X)) : 0
+            p1RB = (p1X > 0) ? Round(p1X) : 0
             p1TB = (p1Y < 0) ? abs(Round(p1Y)) : 0
-            p1BB = (p1Y > 0) ? abs(Round(p1Y)) : 0
+            p1BB = (p1Y > 0) ? Round(p1Y) : 0
         }
 
+        # Use PointResize when the X/Y shift is whole
+        rzr1 = (Fmod(p1X, 1.0)==0 && Fmod(p1Y, 1.0)==0) ? "Point" : rzr
+
         # Shifting and borders
-        p1 = (p1X==0 && p1Y==0) ? input : input.Eval(+ rzr + "Resize(w, h, src_left=p1X, src_top=p1Y)")
+        p1 = (p1X==0 && p1Y==0) ? input : input.Eval(+ rzr1 + "Resize(w, h, src_left=p1X, src_top=p1Y)")
         Return (mode==1) ? p1 : p1.FillBorders(left=p1LB, top=p1TB, right=p1RB, bottom=p1BB, mode=mode)
     }
     else {
@@ -183,8 +198,6 @@ function PixelShiftPlus (clip input, float "plane1X", float "plane1Y", float "pl
                        : BuildPixelType(family="YUV", sample_clip=input)
 
         if (IsYUV_ && !Is444(Input)) {
-            # Override ChromaPixels for PointResize
-            uvp = (rzr=="Point") ? true : uvp
 
             # Determine chroma subsampling ratio
             hss = (IsYV411(input)) ? 4 : 2
@@ -205,24 +218,30 @@ function PixelShiftPlus (clip input, float "plane1X", float "plane1Y", float "pl
             hc = h
         }
 
+        # Use PointResize when the X/Y shift is whole
+        rzr1 = (Fmod(p1X, 1.0)==0 && Fmod(p1Y, 1.0)==0) ? "Point" : rzr
+        rzr2 = (Fmod(p2X, 1.0)==0 && Fmod(p2Y, 1.0)==0) ? "Point" : rzr
+        rzr3 = (Fmod(p3X, 1.0)==0 && Fmod(p3Y, 1.0)==0) ? "Point" : rzr
+        rzr4 = (Fmod(p4X, 1.0)==0 && Fmod(p4Y, 1.0)==0) ? "Point" : rzr
+
         if (mode!=1) {
             # Determine border values
             p1LB = (p1X < 0) ? abs(Round(p1X)) : 0
-            p1RB = (p1X > 0) ? abs(Round(p1X)) : 0
+            p1RB = (p1X > 0) ? Round(p1X) : 0
             p1TB = (p1Y < 0) ? abs(Round(p1Y)) : 0
-            p1BB = (p1Y > 0) ? abs(Round(p1Y)) : 0
+            p1BB = (p1Y > 0) ? Round(p1Y) : 0
             p2LB = (p2X < 0) ? abs(Round(p2X)) : 0
-            p2RB = (p2X > 0) ? abs(Round(p2X)) : 0
+            p2RB = (p2X > 0) ? Round(p2X) : 0
             p2TB = (p2Y < 0) ? abs(Round(p2Y)) : 0
-            p2BB = (p2Y > 0) ? abs(Round(p2Y)) : 0
+            p2BB = (p2Y > 0) ? Round(p2Y) : 0
             p3LB = (p3X < 0) ? abs(Round(p3X)) : 0
-            p3RB = (p3X > 0) ? abs(Round(p3X)) : 0
+            p3RB = (p3X > 0) ? Round(p3X) : 0
             p3TB = (p3Y < 0) ? abs(Round(p3Y)) : 0
-            p3BB = (p3Y > 0) ? abs(Round(p3Y)) : 0
+            p3BB = (p3Y > 0) ? Round(p3Y) : 0
             p4LB = (p4X < 0) ? abs(Round(p4X)) : 0
-            p4RB = (p4X > 0) ? abs(Round(p4X)) : 0
+            p4RB = (p4X > 0) ? Round(p4X) : 0
             p4TB = (p4Y < 0) ? abs(Round(p4Y)) : 0
-            p4BB = (p4Y > 0) ? abs(Round(p4Y)) : 0
+            p4BB = (p4Y > 0) ? Round(p4Y) : 0
         }
 
         # Extract planes based on color format
@@ -232,16 +251,18 @@ function PixelShiftPlus (clip input, float "plane1X", float "plane1Y", float "pl
         p4 = (Alpha_) ? ExtractA(input) : p1
 
         # Shifting
-        p1 = (p1X==0 && p1Y==0) ? p1 : p1.Eval(+ rzr + "Resize(w,  h,  src_left=p1X, src_top=p1Y)")
-        p2 = (p2X==0 && p2Y==0) ? p2 : p2.Eval(+ rzr + "Resize(wc, hc, src_left=p2X, src_top=p2Y)")
-        p3 = (p3X==0 && p3Y==0) ? p3 : p3.Eval(+ rzr + "Resize(wc, hc, src_left=p3X, src_top=p3Y)")
-        p4 = (p4X==0 && p4Y==0) ? p4 : p4.Eval(+ rzr + "Resize(w,  h,  src_left=p4X, src_top=p4Y)")
+        p1 = (p1X==0 && p1Y==0) ? p1 : p1.Eval(+ rzr1 + "Resize(w,  h,  src_left=p1X, src_top=p1Y)")
+        p2 = (p2X==0 && p2Y==0) ? p2 : p2.Eval(+ rzr2 + "Resize(wc, hc, src_left=p2X, src_top=p2Y)")
+        p3 = (p3X==0 && p3Y==0) ? p3 : p3.Eval(+ rzr3 + "Resize(wc, hc, src_left=p3X, src_top=p3Y)")
+        p4 = (p4X==0 && p4Y==0) ? p4 : p4.Eval(+ rzr4 + "Resize(w,  h,  src_left=p4X, src_top=p4Y)")
 
-        # Borders
-        p1 = (mode==1) ? p1 : p1.FillBorders(left=p1LB, top=p1TB, right=p1RB, bottom=p1BB, mode=mode)
-        p2 = (mode==1) ? p2 : p2.FillBorders(left=p2LB, top=p2TB, right=p2RB, bottom=p2BB, mode=mode)
-        p3 = (mode==1) ? p3 : p3.FillBorders(left=p3LB, top=p3TB, right=p3RB, bottom=p3BB, mode=mode)
-        p4 = (mode==1) ? p4 : p4.FillBorders(left=p4LB, top=p4TB, right=p4RB, bottom=p4BB, mode=mode)
+        if (mode!=1) {
+            # Borders
+            p1 = p1.FillBorders(left=p1LB, top=p1TB, right=p1RB, bottom=p1BB, mode=mode)
+            p2 = p2.FillBorders(left=p2LB, top=p2TB, right=p2RB, bottom=p2BB, mode=mode)
+            p3 = p3.FillBorders(left=p3LB, top=p3TB, right=p3RB, bottom=p3BB, mode=mode)
+            p4 = p4.FillBorders(left=p4LB, top=p4TB, right=p4RB, bottom=p4BB, mode=mode)
+        }
 
         # Combines planes and add alpha, if needed
         out = (IsYUV_) ? CombinePlanes(p1, p2, p3, planes="YUV", source_planes="YYY", pixel_type=csp) \
